@@ -31,6 +31,12 @@ class G1AmpEnv(DirectRLEnv):
         self.action_offset = 0.5 * (dof_upper_limits + dof_lower_limits)
         self.action_scale = dof_upper_limits - dof_lower_limits
 
+        #外推力配置
+        self._enable_push = True
+        self._push_step = 200
+        self._push_force_vec = torch.tensor([100.0, 0.0, 0.0], device=self.device)  # 推力大小和方向
+        self._step_count = 0
+        self._push_applied = False
 
         # load motion
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
@@ -90,6 +96,32 @@ class G1AmpEnv(DirectRLEnv):
         # self.pre_actions = self.actions.clone()
         target = self.action_offset + self.action_scale * self.actions
         self.robot.set_joint_position_target(target)
+
+    def _post_physics_step(self):
+        try:
+            super()._post_physics_step()
+        except AttributeError:
+            pass  # in case the parent class does not implement this method
+
+        self._step_count += 1
+
+        if (
+            self._enable_push
+            and (not self._push_applied)
+            and self._step_count == self._push_step
+        ):
+            num_envs = self.num_envs
+            forces = self._push_force_vec.expand(num_envs, -1)
+            torques = torch.zeros_like(forces, device=self.device)
+            indices = torch.arange(num_envs, dtype=torch.int32, device=self.device)
+        
+            self.robot.root_physx_view.apply_forces_and_torques(
+                forces=forces,
+                torques=torques,
+                indices=indices,
+            )
+            
+            self._push_applied = True
 
     def _get_observations(self) -> dict:
         # build task observation
