@@ -34,7 +34,7 @@ class G1AmpEnv(DirectRLEnv):
         #外推力配置
         self._enable_push = True
         self._push_step = 200
-        self._push_force_vec = torch.tensor([100.0, 0.0, 0.0], device=self.device)  # 推力大小和方向
+        self._push_force_vec = torch.tensor([500.0, 0.0, 0.0], device=self.device)  # 推力大小和方向
         self._step_count = 0
         self._push_applied = False
 
@@ -120,7 +120,8 @@ class G1AmpEnv(DirectRLEnv):
                 torques=torques,
                 indices=indices,
             )
-            
+            print(f"[G1AmpEnv] apply push at step {self._step_count}, force = {self._push_force_vec.cpu().numpy()}")
+
             self._push_applied = True
 
     def _get_observations(self) -> dict:
@@ -189,6 +190,9 @@ class G1AmpEnv(DirectRLEnv):
         self.robot.write_root_com_velocity_to_sim(root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
+        # # 推力计数归零（每个 episode 重来）
+        # self._step_count = 0
+        # self._push_applied = False
     # reset strategies
 
     def _reset_strategy_default(self, env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
