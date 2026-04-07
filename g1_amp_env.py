@@ -94,12 +94,12 @@ class G1AmpEnv(DirectRLEnv):
         num_envs = self.num_envs
         forces = self._push_force_vec.expand(num_envs, -1)
         torques = torch.zeros_like(forces, device=self.device)
-        indices = torch.arange(num_envs, dtype=torch.int32, device=self.device)
+        env_ids = torch.arange(num_envs, dtype=torch.int32, device=self.device)
     
-        self.robot.root_physx_view.apply_forces_and_torques(
+        self.robot.apply_body_force_torque(
             forces=forces,
             torques=torques,
-            indices=indices,
+            indices=env_ids,
             body_index=self.ref_body_index
         )
         print(f"[G1AmpEnv] apply push at step {self._step_count} due to {reason}, force = {self._push_force_vec.cpu().numpy()}")
@@ -120,6 +120,7 @@ class G1AmpEnv(DirectRLEnv):
            and self._step_count == self._push_step
         ):
             self._apply_push(reason="fixed step")
+            print(f"[G1AmpEnv] fixed push triggered at step {self._step_count}")
 
         #method 2: external trigger to push (e.g. from keyboard)
         if self._pending_push:
