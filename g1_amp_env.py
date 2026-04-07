@@ -90,20 +90,38 @@ class G1AmpEnv(DirectRLEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
+    """
+    print(inspect.getsource(Articulation.set_external_force_and_torque))
+    Args:
+    forces: External forces in bodies' local frame. Shape is (len(env_ids), len(body_ids), 3).
+    torques: External torques in bodies' local frame. Shape is (len(env_ids), len(body_ids), 3).
+    positions: Positions to apply external wrench. Shape is (len(env_ids), len(body_ids), 3). Defaults to None.
+    body_ids: Body indices to apply external wrench to. Defaults to None (all bodies).
+    env_ids: Environment indices to apply external wrench to. Defaults to None (all instances).
+    is_global: Whether to apply the external wrench in the global frame. Defaults to False. If set to False,
+        the external wrench is applied in the link frame of the articulations' bodies.
+    """
+
     def _apply_push(self, reason: str):
         num_envs = self.num_envs
-        forces = self._push_force_vec.expand(num_envs, -1)
-        torques = torch.zeros_like(forces, device=self.device)
-        env_ids = torch.arange(num_envs, dtype=torch.int32, device=self.device)
-    
-        self.robot.apply_body_force_torque(
-            forces=forces,
-            torques=torques,
-            indices=env_ids,
-            body_index=self.ref_body_index
-        )
-        print(f"[G1AmpEnv] apply push at step {self._step_count} due to {reason}, force = {self._push_force_vec.cpu().numpy()}")
 
+        num_bodies = self.robot.data.body_pos_w.shape[1]
+
+        forces = torch.zeros((num_envs, num_bodies, 3), device=self.device)
+        torques = torch.zeros_like(forces, device=self.device)
+
+        forces[:, self.ref_body_index] = self._push_force_vec
+
+        self.robot.set_external_force_and_torque(
+            forces=forces,
+            torques=torques
+        )
+
+        print(
+            f"[G1AmpEnv] apply push at step {self._step_count} due to {reason}, "
+            f"force = {self._push_force_vec.cpu().numpy()} on body index {self.ref_body_index}"
+        )
+        
         self._push_applied = True
 
     def _pre_physics_step(self, actions: torch.Tensor):
@@ -131,35 +149,6 @@ class G1AmpEnv(DirectRLEnv):
         # self.pre_actions = self.actions.clone()
         target = self.action_offset + self.action_scale * self.actions
         self.robot.set_joint_position_target(target)
-
-    def _post_physics_step(self):
-        try:
-            super()._post_physics_step()
-        except AttributeError:
-            pass  # in case the parent class does not implement this method
-
-        self._step_count += 1
-        print(f"[test]")
-        print(f"[G1AmpEnv] step count: {self._step_count}")
-
-        if (
-            self._enable_push
-            and (not self._push_applied)
-            and self._step_count == self._push_step
-        ):
-            num_envs = self.num_envs
-            forces = self._push_force_vec.expand(num_envs, -1)
-            torques = torch.zeros_like(forces, device=self.device)
-            indices = torch.arange(num_envs, dtype=torch.int32, device=self.device)
-        
-            self.robot.root_physx_view.apply_forces_and_torques(
-                forces=forces,
-                torques=torques,
-                indices=indices,
-            )
-            print(f"[G1AmpEnv] apply push at step {self._step_count}, force = {self._push_force_vec.cpu().numpy()}")
-
-            self._push_applied = True
 
     def trigger_push(self):
         "push next step"
