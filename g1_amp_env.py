@@ -33,8 +33,8 @@ class G1AmpEnv(DirectRLEnv):
 
         #外推力配置
         self._enable_push = True
-        self._push_step = 200
-        self._push_force_vec = torch.tensor([500.0, 0.0, 0.0], device=self.device)  # 推力大小和方向
+        self._push_step = 100
+        self._push_force_vec = torch.tensor([200.0, 0.0, 0.0], device=self.device)  # 推力大小和方向
         self._step_count = 0
         self._push_applied = False
         self._fixed_push = True
@@ -121,7 +121,7 @@ class G1AmpEnv(DirectRLEnv):
             f"[G1AmpEnv] apply push at step {self._step_count} due to {reason}, "
             f"force = {self._push_force_vec.cpu().numpy()} on body index {self.ref_body_index}"
         )
-        
+
         self._push_applied = True
 
     def _pre_physics_step(self, actions: torch.Tensor):
