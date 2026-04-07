@@ -89,6 +89,7 @@ class G1AmpEnv(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor):
+        print("[G1AmpEnv] _pre_physics_step called")
         self.actions = actions.clone()
         # self.pre_actions = actions.clone()
 
@@ -104,6 +105,8 @@ class G1AmpEnv(DirectRLEnv):
             pass  # in case the parent class does not implement this method
 
         self._step_count += 1
+        print(f"[test]")
+        print(f"[G1AmpEnv] step count: {self._step_count}")
 
         if (
             self._enable_push
@@ -123,6 +126,14 @@ class G1AmpEnv(DirectRLEnv):
             print(f"[G1AmpEnv] apply push at step {self._step_count}, force = {self._push_force_vec.cpu().numpy()}")
 
             self._push_applied = True
+
+    def trigger_push(self):
+        "push next step"
+        self._enable_push = True
+        self._push_applied = False
+        
+        self._push_step = self._step_count + 1
+        print(f"[G1AmpEnv] push will be applied at step {self._push_step}")
 
     def _get_observations(self) -> dict:
         # build task observation
