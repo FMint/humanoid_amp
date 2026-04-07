@@ -37,6 +37,8 @@ class G1AmpEnv(DirectRLEnv):
         self._push_force_vec = torch.tensor([500.0, 0.0, 0.0], device=self.device)  # 推力大小和方向
         self._step_count = 0
         self._push_applied = False
+        self._fixed_push = True
+        self._pending_push = False
 
         # load motion
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
@@ -88,10 +90,41 @@ class G1AmpEnv(DirectRLEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
+    def _apply_push(self, reason: str):
+        num_envs = self.num_envs
+        forces = self._push_force_vec.expand(num_envs, -1)
+        torques = torch.zeros_like(forces, device=self.device)
+        indices = torch.arange(num_envs, dtype=torch.int32, device=self.device)
+    
+        self.robot.root_physx_view.apply_forces_and_torques(
+            forces=forces,
+            torques=torques,
+            indices=indices,
+            body_index=self.ref_body_index
+        )
+        print(f"[G1AmpEnv] apply push at step {self._step_count} due to {reason}, force = {self._push_force_vec.cpu().numpy()}")
+
+        self._push_applied = True
+
     def _pre_physics_step(self, actions: torch.Tensor):
-        print("[G1AmpEnv] _pre_physics_step called")
+        # print("[G1AmpEnv] _pre_physics_step called")
         self.actions = actions.clone()
         # self.pre_actions = actions.clone()
+
+        self._step_count += 1
+
+        #method 1: fixed step to trigger push
+        if(self._enable_push
+           and self._fixed_push
+           and (not self._push_applied)
+           and self._step_count == self._push_step
+        ):
+            self._apply_push(reason="fixed step")
+
+        #method 2: external trigger to push (e.g. from keyboard)
+        if self._pending_push:
+            self._apply_push(reason="trigger")
+            self._pending_push = False
 
     def _apply_action(self):
         # self.pre_actions = self.actions.clone()
@@ -132,8 +165,8 @@ class G1AmpEnv(DirectRLEnv):
         self._enable_push = True
         self._push_applied = False
         
-        self._push_step = self._step_count + 1
-        print(f"[G1AmpEnv] push will be applied at step {self._push_step}")
+        self._pending_push = True
+        print(f"[G1AmpEnv] trigger push at step {self._step_count+1}")
 
     def _get_observations(self) -> dict:
         # build task observation
@@ -202,8 +235,9 @@ class G1AmpEnv(DirectRLEnv):
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
         # # 推力计数归零（每个 episode 重来）
-        # self._step_count = 0
-        # self._push_applied = False
+        self._step_count = 0
+        self._push_applied = False
+        self._pending_push = False
     # reset strategies
 
     def _reset_strategy_default(self, env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
