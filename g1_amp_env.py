@@ -152,6 +152,16 @@ class G1AmpEnv(DirectRLEnv):
 
         self._step_count += 1
 
+        #clear external forces and torques at the beginning of each step
+        num_envs = self.num_envs
+        num_bodies = self.robot.data.body_pos_w.shape[1]
+        zero_forces = torch.zeros((num_envs, num_bodies, 3), device=self.device)
+        zero_torques = torch.zeros_like(zero_forces, device=self.device)
+        self.robot.set_external_force_and_torque(
+            forces=zero_forces,
+            torques=zero_torques
+        )
+
         #play 1: fixed step to trigger push
         if(self._enable_push
            and self._fixed_push
