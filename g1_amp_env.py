@@ -31,14 +31,25 @@ class G1AmpEnv(DirectRLEnv):
         self.action_offset = 0.5 * (dof_upper_limits + dof_lower_limits)
         self.action_scale = dof_upper_limits - dof_lower_limits
 
-        #外推力配置
+        #外推力配置-paly
         self._enable_push = True
-        self._push_step = 100
-        self._push_force_vec = torch.tensor([200.0, 0.0, 0.0], device=self.device)  # 推力大小和方向
-        self._step_count = 0
         self._push_applied = False
-        self._fixed_push = True
+
+        self._fixed_push = False
+        self._push_step = 100
+        self._push_force_vec = torch.tensor([100.0, 0.0, 0.0], device=self.device)  # 推力大小和方向
+        self._step_count = 0
+        
         self._pending_push = False
+
+        #push-train
+        self._random_push = False
+        self._random_push_min = 50.0
+        self._random_push_max = 200.0
+        self._steps_to_next_push = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
+
+        # self.push_interval = 100
+
 
         # load motion
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
@@ -124,6 +135,16 @@ class G1AmpEnv(DirectRLEnv):
 
         self._push_applied = True
 
+    def _sample_next_push(self, env_ids: torch.Tensor | None = None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        self._steps_to_next_push[env_ids] = torch.randint(
+            low=int(self._random_push_min),
+            high=int(self._random_push_max),
+            size=(len(env_ids),),
+            device=self.device,
+        )
+
     def _pre_physics_step(self, actions: torch.Tensor):
         # print("[G1AmpEnv] _pre_physics_step called")
         self.actions = actions.clone()
@@ -131,7 +152,7 @@ class G1AmpEnv(DirectRLEnv):
 
         self._step_count += 1
 
-        #method 1: fixed step to trigger push
+        #play 1: fixed step to trigger push
         if(self._enable_push
            and self._fixed_push
            and (not self._push_applied)
@@ -140,10 +161,20 @@ class G1AmpEnv(DirectRLEnv):
             self._apply_push(reason="fixed step")
             print(f"[G1AmpEnv] fixed push triggered at step {self._step_count}")
 
-        #method 2: external trigger to push (e.g. from keyboard)
+        #play 2: external trigger to push (e.g. from keyboard)
         if self._pending_push:
             self._apply_push(reason="trigger")
             self._pending_push = False
+
+        #train: random push with random interval
+        if self._enable_push and self._random_push:
+            self._steps_to_next_push -= 1
+            env_ids = torch.nonzero(self._steps_to_next_push <= 0, as_tuple=False).squeeze(-1)
+            if env_ids.numel() > 0:
+                self._apply_push(reason="random interval")
+                # reset push interval for the envs that got the push
+                self._sample_next_push(env_ids)
+            
 
     def _apply_action(self):
         # self.pre_actions = self.actions.clone()
@@ -228,6 +259,10 @@ class G1AmpEnv(DirectRLEnv):
         self._step_count = 0
         self._push_applied = False
         self._pending_push = False
+
+        if self._random_push:
+            self._sample_next_push(env_ids=None)
+
     # reset strategies
 
     def _reset_strategy_default(self, env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
