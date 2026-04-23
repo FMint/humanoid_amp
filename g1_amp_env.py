@@ -33,12 +33,26 @@ class G1AmpEnv(DirectRLEnv):
 
         #外推力配置
         self._enable_push = True
+        self._push_applied = False
+
+        self._fixed_push = True
+        # self._fixed_push = False
         self._push_step = 100
-        self._push_force_vec = torch.tensor([0.0, 500.0, 0.0], device=self.device)  # 推力大小和方向
+        self._push_force_vec = torch.tensor([0.0, 1000.0, 0.0], device=self.device)  # 推力大小和方向
         self._step_count = 0
         self._push_applied = False
         self._fixed_push = True
         self._pending_push = False
+
+        #push-train
+        # self._random_push = True
+        self._random_push = False
+        self._random_push_min = 50.0
+        self._random_push_max = 300.0
+        self._steps_to_next_push = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+
+        # self.push_interval = 100
+
 
         # load motion
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)

@@ -213,6 +213,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     # reset environment
     obs, _ = env.reset()
     timestep = 0
+
+    total_episodes = 0
+    success_episodes = 0
+    fail_episodes = 0
+
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -228,7 +233,37 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
             else:
                 actions = outputs[-1].get("mean_actions", outputs[0])
             # env stepping
-            obs, _, _, _, _ = env.step(actions)
+            # obs, _, _, _, _ = env.step(actions)
+            obs, _, terminated, truncated, _ = env.step(actions)
+
+        eval_episodes = 2000
+        if eval_episodes:
+            terminated = torch.as_tensor(terminated, dtype=torch.bool)
+            truncated = torch.as_tensor(truncated, dtype=torch.bool)
+
+            done = terminated | truncated
+            done_count = done.sum().item()
+            if done_count > 0:
+                total_episodes += done_count
+                fail_episodes += int(terminated.sum().item())
+                success_episodes += int((truncated & ~terminated).sum().item())
+
+                if total_episodes % 100 == 0:
+                     print(
+                        f"[Eval] Episodes so far: {total_episodes}"
+                        # f"[Eval] Success rate so far: {success_episodes / total_episodes:.2%} "
+                        # f"({success_episodes} successes, {fail_episodes} failures)"
+                    )
+
+                if total_episodes >= eval_episodes:
+                    success_rate = success_episodes / total_episodes
+                    print(
+                        f"[Eval] Done episodes={total_episodes}"
+                        f"[Eval] Success rate: {success_rate:.2%} ({success_episodes} successes, {fail_episodes} failures)"
+                    )
+                    break
+
+
         if args_cli.video:
             timestep += 1
             # exit the play loop after recording one video
