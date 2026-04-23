@@ -126,7 +126,7 @@ class G1AmpEnv(DirectRLEnv):
 
         forces[:, self.ref_body_index] = self._push_force_vec
 
-        self.robot.set_external_force_and_torque(
+        self.robot.permanent_wrench_composer.set_forces_and_torques(
             forces=forces,
             torques=torques
         )
@@ -150,7 +150,7 @@ class G1AmpEnv(DirectRLEnv):
         num_bodies = self.robot.data.body_pos_w.shape[1]
         zero_forces = torch.zeros((num_envs, num_bodies, 3), device=self.device)
         zero_torques = torch.zeros_like(zero_forces, device=self.device)
-        self.robot.set_external_force_and_torque(
+        self.robot.permanent_wrench_composer.set_forces_and_torques(
             forces=zero_forces,
             torques=zero_torques
         )
