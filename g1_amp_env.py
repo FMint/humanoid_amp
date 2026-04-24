@@ -261,7 +261,7 @@ class G1AmpEnv(DirectRLEnv):
             "vel_recovery_time_s": self._vel_recovery_time_s,
             "vel_threshold": self._vel_threshold,
             "hold_steps": self._vel_hold_steps,
-            "time_since_push_s": t_since_push_s,
+            "t_since_push_s": t_since_push_s,
         }
 
         return {"policy": obs}
