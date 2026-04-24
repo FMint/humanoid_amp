@@ -83,6 +83,7 @@ class G1AmpEnv(DirectRLEnv):
             (self.num_envs, self.cfg.num_amp_observations, self.cfg.amp_observation_space), device=self.device
         )
 
+        self._push_active = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self._ref_start_time_s = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self._push_recovered = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._push_start_step = torch.full((self.num_envs,),-1, dtype=torch.int32, device=self.device)
