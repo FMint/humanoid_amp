@@ -92,7 +92,7 @@ class G1AmpEnv(DirectRLEnv):
         self._vel_recovery_time_s = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self._vel_below_count = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
 
-        self._vel_threshold = 0.5
+        self._vel_thresh = 0.5
         self._vel_hold_steps=10
 
     def _get_ref_root_lin_vel(self) -> torch.Tensor:
@@ -112,7 +112,7 @@ class G1AmpEnv(DirectRLEnv):
         if not bool(active.any()):
             return
         
-        below = self._vel_err < self._vel_threshold
+        below = self._vel_err < self._vel_thresh
         self._vel_below_count[active & below] += 1
         self._vel_below_count[active & ~below] = 0
 
@@ -259,7 +259,7 @@ class G1AmpEnv(DirectRLEnv):
             "push_recovered": self._push_recovered,
             "vel_err": self._vel_err,
             "vel_recovery_time_s": self._vel_recovery_time_s,
-            "vel_threshold": self._vel_threshold,
+            "vel_thresh": self._vel_thresh,
             "hold_steps": self._vel_hold_steps,
             "t_since_push_s": t_since_push_s,
         }
