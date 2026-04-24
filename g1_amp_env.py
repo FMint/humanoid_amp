@@ -83,6 +83,47 @@ class G1AmpEnv(DirectRLEnv):
             (self.num_envs, self.cfg.num_amp_observations, self.cfg.amp_observation_space), device=self.device
         )
 
+        self._ref_start_time_s = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        self._push_recovered = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self._push_start_step = torch.full((self.num_envs,),-1, dtype=torch.int32, device=self.device)
+
+        self._vel_err = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        self._vel_recovery_time_s = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        self._vel_below_count = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
+
+        self._vel_threshold = 0.5
+        self._vel_hold_steps=10
+
+    def _get_ref_root_lin_vel(self) -> torch.Tensor:
+        t_s = self._ref_start_time_s + self.episode_length_buf.to(torch.float32) * self.sim.dt
+        t_np = t_s.cpu().numpy()
+        _, _, _, _, body_lin_vel, _ = self._motion_loader.sample(num_samples=self.num_envs, times=t_np)
+
+        ref_v = body_lin_vel[:, self.motion_ref_body_index]
+        return torch.as_tensor(ref_v, device=self.device, dtype=torch.float32)
+    
+    def _update_disturb_vel_metrics(self):
+        ref_v = self._get_ref_root_lin_vel()
+        cur_v = self.robot.data.body_lin_vel_w[:, self.ref_body_index]
+        self._vel_err = torch.linalg.norm(ref_v - cur_v, dim=-1)
+
+        active = self._push_active & (~self._push_recovered)
+        if not bool(active.any()):
+            return
+        
+        below = self._vel_err < self._vel_threshold
+        self._vel_below_count[active & below] += 1
+        self._vel_below_count[active & ~below] = 0
+
+        recovered_now = active & (self._vel_below_count >= self._vel_hold_steps)
+        if bool(recovered_now.any()):
+            steps_since_push = (
+                self.episode_length_buf[recovered_now] - self._push_start_step[recovered_now]
+            )
+            self._vel_recovery_time_s[recovered_now] = steps_since_push.to(torch.float32) * self.sim.dt
+            self._push_recovered[recovered_now] = True
+
+
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
         # add ground plane
@@ -130,6 +171,12 @@ class G1AmpEnv(DirectRLEnv):
             forces=forces,
             torques=torques
         )
+
+        self._push_active[:] = True
+        self._push_recovered[:] = False
+        self._push_start_step[:] = self.episode_length_buf.to(torch.int32)
+        self._vel_below_count.zero_()
+        self._vel_recovery_time_s.zero_()
 
         print(
             f"[G1AmpEnv] apply push at step {self._step_count} due to {reason}, "
@@ -201,6 +248,21 @@ class G1AmpEnv(DirectRLEnv):
         self.amp_observation_buffer[:, 0] = obs.clone()
         self.extras = {"amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size)}
 
+        self._update_disturb_vel_metrics()
+
+        t_since_push_s = (self.episode_length_buf - self._push_start_step).to(torch.float32) * self.sim.dt
+        t_since_push_s = torch.where(self._push_active, t_since_push_s, torch.zeros_like(t_since_push_s))
+
+        self.extras["disturb_vel"] = {
+            "push_active": self._push_active,
+            "push_recovered": self._push_recovered,
+            "vel_err": self._vel_err,
+            "vel_recovery_time_s": self._vel_recovery_time_s,
+            "vel_threshold": self._vel_threshold,
+            "hold_steps": self._vel_hold_steps,
+            "time_since_push_s": t_since_push_s,
+        }
+
         return {"policy": obs}
 
     # def _get_rewards(self) -> torch.Tensor:
@@ -247,6 +309,14 @@ class G1AmpEnv(DirectRLEnv):
         self.robot.write_root_link_pose_to_sim(root_state[:, :7], env_ids)
         self.robot.write_root_com_velocity_to_sim(root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+
+        #push state reset
+        self._push_active[env_ids] = False
+        self._push_recovered[env_ids] = False
+        self._push_start_step[env_ids] = -1
+        self._vel_err[env_ids] = 0.0
+        self._vel_below_count[env_ids] = 0
+        self._vel_recovery_time_s[env_ids] = 0.0
 
         # # 推力计数归零（每个 episode 重来）
         self._step_count = 0

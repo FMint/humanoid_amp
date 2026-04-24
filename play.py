@@ -210,6 +210,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     # set agent to evaluation mode
     runner.agent.set_running_mode("eval")
 
+    base_env = env.env.unwrapped if hasattr(env, "env") else env.unwrapped
+
     # reset environment
     obs, _ = env.reset()
     timestep = 0
@@ -217,6 +219,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     total_episodes = 0
     success_episodes = 0
     fail_episodes = 0
+
+    t_list = []
+    vel_err_list = []
+    printed = False
 
     # simulate environment
     while simulation_app.is_running():
@@ -235,6 +241,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
             # env stepping
             # obs, _, _, _, _ = env.step(actions)
             obs, _, terminated, truncated, _ = env.step(actions)
+
+            #vel
+            dist = getattr(base_env, "extras", {}).get("disturb_vel", None)
+            if dist is not None:
+                if bool(dist["push_active"][0]):
+                    t_list.append(float(dist["t_since_push_s"][0].item()))
+                    vel_err_list.append(float(dist["vel_err"][0].item()))
+
+                if (not printed) and bool(dist["push_recovered"][0]):
+                    rt = float(dist["vel_recovery_time_s"][0].item())
+                    print(f"[EVAL] env0 velocity recovered in {rt:.3f} s (thresh={float(dist['vel_thresh']):.3f} m/s)")
+                    printed = True
+                    break
 
         eval_episodes = 2000
         if eval_episodes:
