@@ -38,7 +38,7 @@ class G1AmpEnv(DirectRLEnv):
         self._fixed_push = True
         # self._fixed_push = False
         self._push_step = 100
-        self._push_force_vec = torch.tensor([0.0, 1000.0, 0.0], device=self.device)  # 推力大小和方向
+        self._push_force_vec = torch.tensor([0.0, 600.0, 0.0], device=self.device)  # 推力大小和方向
         self._step_count = 0
         self._push_applied = False
         self._fixed_push = True
@@ -83,7 +83,7 @@ class G1AmpEnv(DirectRLEnv):
             (self.num_envs, self.cfg.num_amp_observations, self.cfg.amp_observation_space), device=self.device
         )
 
-        self._push_active = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        self._push_active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._ref_start_time_s = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self._push_recovered = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._push_start_step = torch.full((self.num_envs,),-1, dtype=torch.int32, device=self.device)
@@ -96,7 +96,7 @@ class G1AmpEnv(DirectRLEnv):
         self._vel_hold_steps=10
 
     def _get_ref_root_lin_vel(self) -> torch.Tensor:
-        t_s = self._ref_start_time_s + self.episode_length_buf.to(torch.float32) * self.sim.dt
+        t_s = self._ref_start_time_s + self.episode_length_buf.to(torch.float32) * self.step_dt
         t_np = t_s.cpu().numpy()
         _, _, _, _, body_lin_vel, _ = self._motion_loader.sample(num_samples=self.num_envs, times=t_np)
 
@@ -121,7 +121,7 @@ class G1AmpEnv(DirectRLEnv):
             steps_since_push = (
                 self.episode_length_buf[recovered_now] - self._push_start_step[recovered_now]
             )
-            self._vel_recovery_time_s[recovered_now] = steps_since_push.to(torch.float32) * self.sim.dt
+            self._vel_recovery_time_s[recovered_now] = steps_since_push.to(torch.float32) * self.step_dt
             self._push_recovered[recovered_now] = True
 
 
@@ -251,7 +251,7 @@ class G1AmpEnv(DirectRLEnv):
 
         self._update_disturb_vel_metrics()
 
-        t_since_push_s = (self.episode_length_buf - self._push_start_step).to(torch.float32) * self.sim.dt
+        t_since_push_s = (self.episode_length_buf - self._push_start_step).to(torch.float32) * self.step_dt
         t_since_push_s = torch.where(self._push_active, t_since_push_s, torch.zeros_like(t_since_push_s))
 
         self.extras["disturb_vel"] = {
@@ -338,6 +338,9 @@ class G1AmpEnv(DirectRLEnv):
         # sample random motion times (or zeros if start is True)
         num_samples = env_ids.shape[0]
         times = np.zeros(num_samples) if start else self._motion_loader.sample_times(num_samples)
+        
+        self._ref_start_time_s[env_ids] = torch.as_tensor(times, device=self.device, dtype=torch.float32)
+
         # sample random motions
         (
             dof_positions,
