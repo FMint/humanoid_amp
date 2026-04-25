@@ -100,6 +100,7 @@ class G1AmpEnv(DirectRLEnv):
 
     def _get_ref_root_lin_vel(self) -> torch.Tensor:
         t_s = self._ref_start_time_s + self.episode_length_buf.to(torch.float32) * self.step_dt
+        self._ref_time_s_cache = t_s
         t_s = torch.remainder(t_s, float(self._motion_loader.duration))
         t_np = t_s.cpu().numpy()
         _, _, _, _, body_lin_vel, _ = self._motion_loader.sample(num_samples=self.num_envs, times=t_np)
@@ -274,6 +275,9 @@ class G1AmpEnv(DirectRLEnv):
             "vel_thresh": self._vel_thresh,
             "hold_steps": self._vel_hold_steps,
             "t_since_push_s": t_since_push_s,
+
+            "ref_time_s":self._ref_time_s_cache,
+            "ref_start_time_s": self._ref_start_time_s,
         }
 
         return {"policy": obs}

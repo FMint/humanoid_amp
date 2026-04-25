@@ -268,7 +268,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
                     ref_v0[0], ref_v0[1], ref_v0[2],
                     cur_v0[0], cur_v0[1], cur_v0[2],
                     ref_speed0, cur_speed0,
-                    e0,
+                    e0,              
                 ])
 
                 if (not printed) and bool(dist["push_recovered"][0]):
@@ -332,7 +332,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
                 "ref_vx", "ref_vy", "ref_vz",
                 "cur_vx", "cur_vy", "cur_vz",
                 "ref_speed", "cur_speed",
-                "vel_err"])
+                "vel_err",
+                "ref_time_s", "ref_start_time_s"
+                ])
             writer.writerows(vel_rows)
         print(f"[Eval] Saved velocity recovery data to {out_csv}")
 
