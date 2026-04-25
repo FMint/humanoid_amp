@@ -268,7 +268,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
                     ref_v0[0], ref_v0[1], ref_v0[2],
                     cur_v0[0], cur_v0[1], cur_v0[2],
                     ref_speed0, cur_speed0,
-                    e0,              
+                    e0,
+                    float(dist["ref_time_s"][0].item()), float(dist["ref_start_time_s"][0].item())
                 ])
 
                 if (not printed) and bool(dist["push_recovered"][0]):
