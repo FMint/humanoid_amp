@@ -273,7 +273,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
 
                 if (not printed) and bool(dist["push_recovered"][0]):
                     rt=float(dist["vel_recovery_time_s"][0].item())
-                    print(f"[Eval] Velocity recovery time: {rt:.2f} seconds (threshold: {float(dist['vel_thresh'][0].item()):.2f} m/s, hold steps: {int(dist['hold_steps'][0].item())} steps)")
+                    print(f"[Eval] Velocity recovery time: {rt:.2f} seconds (threshold: {float(dist['vel_thresh']):.2f} m/s)")
                     printed = True
                     recovery_time = t0
 
