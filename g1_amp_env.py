@@ -92,6 +92,9 @@ class G1AmpEnv(DirectRLEnv):
         self._vel_recovery_time_s = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self._vel_below_count = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
 
+        self._ref_root_lin_vel_cache = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+        self._cur_root_lin_vel_cache = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+
         self._vel_thresh = 0.5
         self._vel_hold_steps=10
 
@@ -107,6 +110,9 @@ class G1AmpEnv(DirectRLEnv):
         ref_v = self._get_ref_root_lin_vel()
         cur_v = self.robot.data.body_lin_vel_w[:, self.ref_body_index]
         self._vel_err = torch.linalg.norm(ref_v - cur_v, dim=-1)
+
+        self._ref_root_lin_vel_cache = ref_v
+        self._cur_root_lin_vel_cache = cur_v
 
         active = self._push_active & (~self._push_recovered)
         if not bool(active.any()):
@@ -257,7 +263,12 @@ class G1AmpEnv(DirectRLEnv):
         self.extras["disturb_vel"] = {
             "push_active": self._push_active,
             "push_recovered": self._push_recovered,
+
             "vel_err": self._vel_err,
+
+            "ref_root_lin_vel": self._ref_root_lin_vel_cache,
+            "cur_root_lin_vel": self._cur_root_lin_vel_cache,
+
             "vel_recovery_time_s": self._vel_recovery_time_s,
             "vel_thresh": self._vel_thresh,
             "hold_steps": self._vel_hold_steps,

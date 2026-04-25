@@ -15,6 +15,8 @@ a more user-friendly way.
 import argparse
 import sys
 
+import numpy as np
+
 from isaaclab.app import AppLauncher
 
 # add argparse arguments
@@ -224,6 +226,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     vel_err_list = []
     printed = False
 
+    vel_rows=[]
+    recording_started = False
+    stop_after_recovery = True
+    stop_extra_second = 2.0
+    recovery_time = None
+
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -244,43 +252,62 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
 
             #vel
             dist = getattr(base_env, "extras", {}).get("disturb_vel", None)
-            if dist is not None:
-                if bool(dist["push_active"][0]):
-                    t_list.append(float(dist["t_since_push_s"][0].item()))
-                    vel_err_list.append(float(dist["vel_err"][0].item()))
+            if dist is not None and bool(dist["push_active"][0]):
+                recording_started = True
+                t0=float(dist["t_since_push_s"][0].item())
+                e0=float(dist["vel_err"][0].item())
+
+                ref_v0 = dist["ref_root_lin_vel"][0].detach().cpu().numpy()
+                cur_v0 = dist["cur_root_lin_vel"][0].detach().cpu().numpy()
+
+                ref_speed0 = float(np.linalg.norm(ref_v0))
+                cur_speed0 = float(np.linalg.norm(cur_v0))
+
+                vel_rows.append([
+                    t0,
+                    ref_v0[0], ref_v0[1], ref_v0[2],
+                    cur_v0[0], cur_v0[1], cur_v0[2],
+                    ref_speed0, cur_speed0,
+                    e0,
+                ])
 
                 if (not printed) and bool(dist["push_recovered"][0]):
-                    rt = float(dist["vel_recovery_time_s"][0].item())
-                    print(f"[EVAL] env0 velocity recovered in {rt:.3f} s (thresh={float(dist['vel_thresh']):.3f} m/s)")
+                    rt=float(dist["vel_recovery_time_s"][0].item())
+                    print(f"[Eval] Velocity recovery time: {rt:.2f} seconds (threshold: {float(dist['vel_thresh'][0].item()):.2f} m/s, hold steps: {int(dist['hold_steps'][0].item())} steps)")
                     printed = True
-                    break
+                    recovery_time = t0
 
-        eval_episodes = 2000
-        if eval_episodes:
-            terminated = torch.as_tensor(terminated, dtype=torch.bool)
-            truncated = torch.as_tensor(truncated, dtype=torch.bool)
+                if stop_after_recovery and (recovery_time is not None):
+                    if t0 >= recovery_time + stop_extra_second:
+                        print(f"[Eval] Stopping evaluation after {stop_extra_second} seconds since velocity recovery.")
+                        break
 
-            done = terminated | truncated
-            done_count = done.sum().item()
-            if done_count > 0:
-                total_episodes += done_count
-                fail_episodes += int(terminated.sum().item())
-                success_episodes += int((truncated & ~terminated).sum().item())
+        # eval_episodes = 2000
+        # if eval_episodes:
+        #     terminated = torch.as_tensor(terminated, dtype=torch.bool)
+        #     truncated = torch.as_tensor(truncated, dtype=torch.bool)
 
-                if total_episodes % 100 == 0:
-                     print(
-                        f"[Eval] Episodes so far: {total_episodes}"
-                        # f"[Eval] Success rate so far: {success_episodes / total_episodes:.2%} "
-                        # f"({success_episodes} successes, {fail_episodes} failures)"
-                    )
+        #     done = terminated | truncated
+        #     done_count = done.sum().item()
+        #     if done_count > 0:
+        #         total_episodes += done_count
+        #         fail_episodes += int(terminated.sum().item())
+        #         success_episodes += int((truncated & ~terminated).sum().item())
 
-                if total_episodes >= eval_episodes:
-                    success_rate = success_episodes / total_episodes
-                    print(
-                        f"[Eval] Done episodes={total_episodes}"
-                        f"[Eval] Success rate: {success_rate:.2%} ({success_episodes} successes, {fail_episodes} failures)"
-                    )
-                    break
+        #         if total_episodes % 100 == 0:
+        #              print(
+        #                 f"[Eval] Episodes so far: {total_episodes}"
+        #                 # f"[Eval] Success rate so far: {success_episodes / total_episodes:.2%} "
+        #                 # f"({success_episodes} successes, {fail_episodes} failures)"
+        #             )
+
+        #         if total_episodes >= eval_episodes:
+        #             success_rate = success_episodes / total_episodes
+        #             print(
+        #                 f"[Eval] Done episodes={total_episodes}"
+        #                 f"[Eval] Success rate: {success_rate:.2%} ({success_episodes} successes, {fail_episodes} failures)"
+        #             )
+        #             break
 
 
         if args_cli.video:
@@ -293,6 +320,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
         sleep_time = dt - (time.time() - start_time)
         if args_cli.real_time and sleep_time > 0:
             time.sleep(sleep_time)
+
+    if recording_started and len(vel_rows) > 0:
+        out_csv = os.path.join(log_dir, "velocity_recovery.csv")
+        os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+        import csv
+        with open(out_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "t_since_push_s", 
+                "ref_vx", "ref_vy", "ref_vz",
+                "cur_vx", "cur_vy", "cur_vz",
+                "ref_speed", "cur_speed",
+                "vel_err"])
+            writer.writerows(vel_rows)
+        print(f"[Eval] Saved velocity recovery data to {out_csv}")
 
     # close the simulator
     env.close()
