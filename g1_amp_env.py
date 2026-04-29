@@ -31,6 +31,28 @@ class G1AmpEnv(DirectRLEnv):
         self.action_offset = 0.5 * (dof_upper_limits + dof_lower_limits)
         self.action_scale = dof_upper_limits - dof_lower_limits
 
+        #外推力配置
+        self._enable_push = True
+        self._push_applied = False
+
+        self._fixed_push = True
+        # self._fixed_push = False
+        self._push_step = 100
+        self._push_force_vec = torch.tensor([0.0, 600.0, 0.0], device=self.device)  # 推力大小和方向
+        self._step_count = 0
+        self._push_applied = False
+        self._fixed_push = True
+        self._pending_push = False
+
+        #push-train
+        # self._random_push = True
+        self._random_push = False
+        self._random_push_min = 50.0
+        self._random_push_max = 300.0
+        self._steps_to_next_push = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+
+        # self.push_interval = 100
+
 
         # load motion
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
@@ -61,6 +83,9 @@ class G1AmpEnv(DirectRLEnv):
             (self.num_envs, self.cfg.num_amp_observations, self.cfg.amp_observation_space), device=self.device
         )
 
+        self._push_body_name = "pelvis"
+        self._push_body_index = self.robot.data.body_names.index(self._push_body_name)
+
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
         # add ground plane
@@ -82,14 +107,83 @@ class G1AmpEnv(DirectRLEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
+    """
+    print(inspect.getsource(Articulation.set_external_force_and_torque))
+    Args:
+    forces: External forces in bodies' local frame. Shape is (len(env_ids), len(body_ids), 3).
+    torques: External torques in bodies' local frame. Shape is (len(env_ids), len(body_ids), 3).
+    positions: Positions to apply external wrench. Shape is (len(env_ids), len(body_ids), 3). Defaults to None.
+    body_ids: Body indices to apply external wrench to. Defaults to None (all bodies).
+    env_ids: Environment indices to apply external wrench to. Defaults to None (all instances).
+    is_global: Whether to apply the external wrench in the global frame. Defaults to False. If set to False,
+        the external wrench is applied in the link frame of the articulations' bodies.
+    """
+
+    def _apply_push(self, reason: str):
+        num_envs = self.num_envs
+
+        num_bodies = self.robot.data.body_pos_w.shape[1]
+
+        forces = torch.zeros((num_envs, num_bodies, 3), device=self.device)
+        torques = torch.zeros_like(forces, device=self.device)
+
+        forces[:, self._push_body_index] = self._push_force_vec
+
+        self.robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=forces,
+            torques=torques
+        )
+
+        print(
+            f"[G1AmpEnv] apply push at step {self._step_count} due to {reason}, "
+            f"force = {self._push_force_vec.cpu().numpy()} on body index {self.ref_body_index}"
+        )
+
+        self._push_applied = True
+
     def _pre_physics_step(self, actions: torch.Tensor):
+        # print("[G1AmpEnv] _pre_physics_step called")
         self.actions = actions.clone()
         # self.pre_actions = actions.clone()
+
+        self._step_count += 1
+
+        #clear external forces and torques at the beginning of each step
+        num_envs = self.num_envs
+        num_bodies = self.robot.data.body_pos_w.shape[1]
+        zero_forces = torch.zeros((num_envs, num_bodies, 3), device=self.device)
+        zero_torques = torch.zeros_like(zero_forces, device=self.device)
+        self.robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=zero_forces,
+            torques=zero_torques
+        )
+
+        #method 1: fixed step to trigger push
+        if(self._enable_push
+           and self._fixed_push
+           and (not self._push_applied)
+           and self._step_count == self._push_step
+        ):
+            self._apply_push(reason="fixed step")
+            print(f"[G1AmpEnv] fixed push triggered at step {self._step_count}")
+
+        #method 2: external trigger to push (e.g. from keyboard)
+        if self._pending_push:
+            self._apply_push(reason="trigger")
+            self._pending_push = False
 
     def _apply_action(self):
         # self.pre_actions = self.actions.clone()
         target = self.action_offset + self.action_scale * self.actions
         self.robot.set_joint_position_target(target)
+
+    def trigger_push(self):
+        "push next step"
+        self._enable_push = True
+        self._push_applied = False
+        
+        self._pending_push = True
+        print(f"[G1AmpEnv] trigger push at step {self._step_count+1}")
 
     def _get_observations(self) -> dict:
         # build task observation
@@ -157,6 +251,10 @@ class G1AmpEnv(DirectRLEnv):
         self.robot.write_root_com_velocity_to_sim(root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
+        # # 推力计数归零（每个 episode 重来）
+        self._step_count = 0
+        self._push_applied = False
+        self._pending_push = False
     # reset strategies
 
     def _reset_strategy_default(self, env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

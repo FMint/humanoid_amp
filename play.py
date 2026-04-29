@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -74,13 +74,13 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-import gymnasium as gym
 import os
 import random
 import time
-import torch
 
+import gymnasium as gym
 import skrl
+import torch
 from packaging import version
 
 # check for minimum supported skrl version
@@ -105,9 +105,9 @@ from isaaclab.envs import (
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 from isaaclab_rl.skrl import SkrlVecEnvWrapper
+from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
@@ -171,6 +171,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    print("env type:", type(env.unwrapped))
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv) and algorithm in ["ppo"]:
@@ -212,6 +213,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     # reset environment
     obs, _ = env.reset()
     timestep = 0
+
+    total_episodes = 0
+    success_episodes = 0
+    fail_episodes = 0
+
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -227,7 +233,37 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
             else:
                 actions = outputs[-1].get("mean_actions", outputs[0])
             # env stepping
-            obs, _, _, _, _ = env.step(actions)
+            # obs, _, _, _, _ = env.step(actions)
+            obs, _, terminated, truncated, _ = env.step(actions)
+
+        eval_episodes = 2000
+        if eval_episodes:
+            terminated = torch.as_tensor(terminated, dtype=torch.bool)
+            truncated = torch.as_tensor(truncated, dtype=torch.bool)
+
+            done = terminated | truncated
+            done_count = done.sum().item()
+            if done_count > 0:
+                total_episodes += done_count
+                fail_episodes += int(terminated.sum().item())
+                success_episodes += int((truncated & ~terminated).sum().item())
+
+                if total_episodes % 100 == 0:
+                     print(
+                        f"[Eval] Episodes so far: {total_episodes}"
+                        # f"[Eval] Success rate so far: {success_episodes / total_episodes:.2%} "
+                        # f"({success_episodes} successes, {fail_episodes} failures)"
+                    )
+
+                if total_episodes >= eval_episodes:
+                    success_rate = success_episodes / total_episodes
+                    print(
+                        f"[Eval] Done episodes={total_episodes}"
+                        f"[Eval] Success rate: {success_rate:.2%} ({success_episodes} successes, {fail_episodes} failures)"
+                    )
+                    break
+
+
         if args_cli.video:
             timestep += 1
             # exit the play loop after recording one video
