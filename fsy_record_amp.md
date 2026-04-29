@@ -12,6 +12,7 @@ train5: force(50-900) #error? self._push_force_vec = [100.0, 0.0, 0.0]
 
 train6: self._push_force_vec = [600.0, 0.0, 0.0]
 train7: self._push_force_vec = [0.0, 600.0, 0.0]
+train8: self._push_force_vec = [0.0, 900.0, 0.0]
 
 
 amp-train1:
@@ -35,4 +36,19 @@ python -m humanoid_amp.play --task Isaac-G1-AMP-Walk-Direct-v0 --num_envs 4 --ch
 train5：
 ```bash
 python -m humanoid_amp.play --task Isaac-G1-AMP-Walk-Direct-v0 --num_envs 4 --checkpoint logs/skrl/g1_amp_walk/2026-04-16_10-44-26_ppo_torch/checkpoints/best_agent.pt
+```
+
+train6: self._push_force_vec = [600.0, 0.0, 0.0]
+```bash
+python -m humanoid_amp.play --task Isaac-G1-AMP-Walk-Direct-v0 --num_envs 4 --checkpoint logs/skrl/g1_amp_walk/2026-04-29_09-03-52_ppo_torch/checkpoints/best_agent.pt
+```
+
+train7: self._push_force_vec = [0.0, 600.0, 0.0]
+```bash
+python -m humanoid_amp.play --task Isaac-G1-AMP-Walk-Direct-v0 --num_envs 4 --checkpoint logs/skrl/g1_amp_walk/2026-04-29_09-05-43_ppo_torch/checkpoints/best_agent.pt
+```
+
+train8: self._push_force_vec = [0.0, 900.0, 0.0]
+```bash
+python -m humanoid_amp.play --task Isaac-G1-AMP-Walk-Direct-v0 --num_envs 4 --checkpoint logs/skrl/g1_amp_walk/2026-04-29_09-19-04_ppo_torch/checkpoints/best_agent.pt
 ```
