@@ -31,6 +31,27 @@ class G1AmpEnv(DirectRLEnv):
         self.action_offset = 0.5 * (dof_upper_limits + dof_lower_limits)
         self.action_scale = dof_upper_limits - dof_lower_limits
 
+        #外推力配置
+        self._enable_push = True
+        self._push_applied = False
+
+        self._fixed_push = True
+        # self._fixed_push = False
+        self._push_step = 100
+        self._push_force_vec = torch.tensor([0.0, 600.0, 0.0], device=self.device)  # 推力大小和方向
+        self._step_count = 0
+        self._push_applied = False
+        self._pending_push = False
+
+        #push-train
+        # self._random_push = True
+        self._random_push = False
+        self._random_push_min = 50.0
+        self._random_push_max = 300.0
+        self._steps_to_next_push = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+
+        # self.push_interval = 100
+
 
         # load motion
         self._motion_loader = MotionLoader(motion_file=self.cfg.motion_file, device=self.device)
@@ -61,6 +82,56 @@ class G1AmpEnv(DirectRLEnv):
             (self.num_envs, self.cfg.num_amp_observations, self.cfg.amp_observation_space), device=self.device
         )
 
+        self._push_active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self._ref_start_time_s = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        self._push_recovered = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self._push_start_step = torch.full((self.num_envs,),-1, dtype=torch.int32, device=self.device)
+
+        self._vel_err = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        self._vel_recovery_time_s = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        self._vel_below_count = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
+
+        self._ref_root_lin_vel_cache = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+        self._cur_root_lin_vel_cache = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+
+        self._vel_thresh = 0.5
+        self._vel_hold_steps=10
+
+    def _get_ref_root_lin_vel(self) -> torch.Tensor:
+        t_s = self._ref_start_time_s + self.episode_length_buf.to(torch.float32) * self.step_dt
+        self._ref_time_s_cache = t_s
+        t_s = torch.remainder(t_s, float(self._motion_loader.duration))
+        t_np = t_s.cpu().numpy()
+        _, _, _, _, body_lin_vel, _ = self._motion_loader.sample(num_samples=self.num_envs, times=t_np)
+
+        ref_v = body_lin_vel[:, self.motion_ref_body_index]
+        return torch.as_tensor(ref_v, device=self.device, dtype=torch.float32)
+    
+    def _update_disturb_vel_metrics(self):
+        ref_v = self._get_ref_root_lin_vel()
+        cur_v = self.robot.data.body_lin_vel_w[:, self.ref_body_index]
+        self._vel_err = torch.linalg.norm(ref_v - cur_v, dim=-1)
+
+        self._ref_root_lin_vel_cache = ref_v
+        self._cur_root_lin_vel_cache = cur_v
+
+        active = self._push_active & (~self._push_recovered)
+        if not bool(active.any()):
+            return
+        
+        below = self._vel_err < self._vel_thresh
+        self._vel_below_count[active & below] += 1
+        self._vel_below_count[active & ~below] = 0
+
+        recovered_now = active & (self._vel_below_count >= self._vel_hold_steps)
+        if bool(recovered_now.any()):
+            steps_since_push = (
+                self.episode_length_buf[recovered_now] - self._push_start_step[recovered_now]
+            )
+            self._vel_recovery_time_s[recovered_now] = steps_since_push.to(torch.float32) * self.step_dt
+            self._push_recovered[recovered_now] = True
+
+
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
         # add ground plane
@@ -82,14 +153,89 @@ class G1AmpEnv(DirectRLEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
+    """
+    print(inspect.getsource(Articulation.set_external_force_and_torque))
+    Args:
+    forces: External forces in bodies' local frame. Shape is (len(env_ids), len(body_ids), 3).
+    torques: External torques in bodies' local frame. Shape is (len(env_ids), len(body_ids), 3).
+    positions: Positions to apply external wrench. Shape is (len(env_ids), len(body_ids), 3). Defaults to None.
+    body_ids: Body indices to apply external wrench to. Defaults to None (all bodies).
+    env_ids: Environment indices to apply external wrench to. Defaults to None (all instances).
+    is_global: Whether to apply the external wrench in the global frame. Defaults to False. If set to False,
+        the external wrench is applied in the link frame of the articulations' bodies.
+    """
+
+    def _apply_push(self, reason: str):
+        num_envs = self.num_envs
+
+        num_bodies = self.robot.data.body_pos_w.shape[1]
+
+        forces = torch.zeros((num_envs, num_bodies, 3), device=self.device)
+        torques = torch.zeros_like(forces, device=self.device)
+
+        forces[:, self.ref_body_index] = self._push_force_vec
+
+        self.robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=forces,
+            torques=torques
+        )
+
+        self._push_active[:] = True
+        self._push_recovered[:] = False
+        self._push_start_step[:] = self.episode_length_buf.to(torch.int32)
+        self._vel_below_count.zero_()
+        self._vel_recovery_time_s.zero_()
+
+        print(
+            f"[G1AmpEnv] apply push at step {self._step_count} due to {reason}, "
+            f"force = {self._push_force_vec.cpu().numpy()} on body index {self.ref_body_index}"
+        )
+
+        self._push_applied = True
+
     def _pre_physics_step(self, actions: torch.Tensor):
+        # print("[G1AmpEnv] _pre_physics_step called")
         self.actions = actions.clone()
         # self.pre_actions = actions.clone()
+
+        self._step_count += 1
+
+        #clear external forces and torques at the beginning of each step
+        num_envs = self.num_envs
+        num_bodies = self.robot.data.body_pos_w.shape[1]
+        zero_forces = torch.zeros((num_envs, num_bodies, 3), device=self.device)
+        zero_torques = torch.zeros_like(zero_forces, device=self.device)
+        self.robot.permanent_wrench_composer.set_forces_and_torques(
+            forces=zero_forces,
+            torques=zero_torques
+        )
+
+        #method 1: fixed step to trigger push
+        if(self._enable_push
+           and self._fixed_push
+           and (not self._push_applied)
+           and self._step_count == self._push_step
+        ):
+            self._apply_push(reason="fixed step")
+            print(f"[G1AmpEnv] fixed push triggered at step {self._step_count}")
+
+        #method 2: external trigger to push (e.g. from keyboard)
+        if self._pending_push:
+            self._apply_push(reason="trigger")
+            self._pending_push = False
 
     def _apply_action(self):
         # self.pre_actions = self.actions.clone()
         target = self.action_offset + self.action_scale * self.actions
         self.robot.set_joint_position_target(target)
+
+    def trigger_push(self):
+        "push next step"
+        self._enable_push = True
+        self._push_applied = False
+        
+        self._pending_push = True
+        print(f"[G1AmpEnv] trigger push at step {self._step_count+1}")
 
     def _get_observations(self) -> dict:
         # build task observation
@@ -109,6 +255,29 @@ class G1AmpEnv(DirectRLEnv):
         # build AMP observation
         self.amp_observation_buffer[:, 0] = obs.clone()
         self.extras = {"amp_obs": self.amp_observation_buffer.view(-1, self.amp_observation_size)}
+
+        self._update_disturb_vel_metrics()
+
+        t_since_push_s = (self.episode_length_buf - self._push_start_step).to(torch.float32) * self.step_dt
+        t_since_push_s = torch.where(self._push_active, t_since_push_s, torch.zeros_like(t_since_push_s))
+
+        self.extras["disturb_vel"] = {
+            "push_active": self._push_active,
+            "push_recovered": self._push_recovered,
+
+            "vel_err": self._vel_err,
+
+            "ref_root_lin_vel": self._ref_root_lin_vel_cache,
+            "cur_root_lin_vel": self._cur_root_lin_vel_cache,
+
+            "vel_recovery_time_s": self._vel_recovery_time_s,
+            "vel_thresh": self._vel_thresh,
+            "hold_steps": self._vel_hold_steps,
+            "t_since_push_s": t_since_push_s,
+
+            "ref_time_s":self._ref_time_s_cache,
+            "ref_start_time_s": self._ref_start_time_s,
+        }
 
         return {"policy": obs}
 
@@ -157,6 +326,18 @@ class G1AmpEnv(DirectRLEnv):
         self.robot.write_root_com_velocity_to_sim(root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
+        #push state reset
+        self._push_active[env_ids] = False
+        self._push_recovered[env_ids] = False
+        self._push_start_step[env_ids] = -1
+        self._vel_err[env_ids] = 0.0
+        self._vel_below_count[env_ids] = 0
+        self._vel_recovery_time_s[env_ids] = 0.0
+
+        # # 推力计数归零（每个 episode 重来）
+        self._step_count = 0
+        self._push_applied = False
+        self._pending_push = False
     # reset strategies
 
     def _reset_strategy_default(self, env_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -172,6 +353,9 @@ class G1AmpEnv(DirectRLEnv):
         # sample random motion times (or zeros if start is True)
         num_samples = env_ids.shape[0]
         times = np.zeros(num_samples) if start else self._motion_loader.sample_times(num_samples)
+        
+        self._ref_start_time_s[env_ids] = torch.as_tensor(times, device=self.device, dtype=torch.float32)
+
         # sample random motions
         (
             dof_positions,
