@@ -5,10 +5,13 @@ python -m humanoid_amp.train --task Isaac-G1-AMP-Dance-Direct-v0 --headless --nu
 ```
 
 train1: no push
-train2: force(50-600)
+train2: force(50-600) #error? self._push_force_vec = [100.0, 0.0, 0.0]
 train3: no push dance
-train4: force(50-300)
-train5: force(50-900)
+train4: force(50-300) #error? self._push_force_vec = [100.0, 0.0, 0.0]
+train5: force(50-900) #error? self._push_force_vec = [100.0, 0.0, 0.0]
+
+train6: self._push_force_vec = [600.0, 0.0, 0.0]
+train7: self._push_force_vec = [0.0, 600.0, 0.0]
 
 
 amp-train1:
