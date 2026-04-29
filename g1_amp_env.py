@@ -38,7 +38,7 @@ class G1AmpEnv(DirectRLEnv):
         self._fixed_push = True
         # self._fixed_push = False
         self._push_step = 100
-        self._push_force_vec = torch.tensor([0.0, 1000.0, 0.0], device=self.device)  # 推力大小和方向
+        self._push_force_vec = torch.tensor([0.0, 600.0, 0.0], device=self.device)  # 推力大小和方向
         self._step_count = 0
         self._push_applied = False
         self._fixed_push = True
@@ -83,6 +83,9 @@ class G1AmpEnv(DirectRLEnv):
             (self.num_envs, self.cfg.num_amp_observations, self.cfg.amp_observation_space), device=self.device
         )
 
+        self._push_body_name = "pelvis"
+        self._push_body_index = self.robot.data.body_names.index(self._push_body_name)
+
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
         # add ground plane
@@ -124,7 +127,7 @@ class G1AmpEnv(DirectRLEnv):
         forces = torch.zeros((num_envs, num_bodies, 3), device=self.device)
         torques = torch.zeros_like(forces, device=self.device)
 
-        forces[:, self.ref_body_index] = self._push_force_vec
+        forces[:, self._push_body_index] = self._push_force_vec
 
         self.robot.permanent_wrench_composer.set_forces_and_torques(
             forces=forces,
