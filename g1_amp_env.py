@@ -41,7 +41,6 @@ class G1AmpEnv(DirectRLEnv):
         self._push_force_vec = torch.tensor([0.0, 600.0, 0.0], device=self.device)  # 推力大小和方向
         self._step_count = 0
         self._push_applied = False
-        self._fixed_push = True
         self._pending_push = False
 
         #push-train
